@@ -24,7 +24,7 @@ class NetConfigTool:
 
         self.create_widgets()
         self.refresh_adapters()
-        # 启动后台自动刷新网卡状态（2秒一次，不卡顿）
+        # 启动后台自动刷新网卡状态（5秒一次，子线程运行不卡顿）
         self.auto_refresh_adapter_status()
 
     # 执行cmd通用函数 GBK编码适配中文windows
@@ -84,23 +84,22 @@ class NetConfigTool:
         real_names = [item[1] for item in adapter_list]
 
         self.adapters = real_names
-        self.adapter_combobox["values"] = display_names
-        
-        # 保持原有选中项，无选中则默认第一个
-        if current_selection in display_names:
-            self.adapter_combobox.set(current_selection)
-        else:
-            self.adapter_combobox.current(0)
-            
-        self.select_adapter()
+        # 跨线程更新UI必须用after抛回主线程
+        def update_ui():
+            self.adapter_combobox["values"] = display_names
+            # 保持原有选中项，无选中则默认第一个
+            if current_selection in display_names:
+                self.adapter_combobox.set(current_selection)
+            else:
+                self.adapter_combobox.current(0)
+            self.select_adapter()
+        self.root.after(0, update_ui)
 
-    # ==================== 自动刷新网卡连接状态（核心新增） ====================
+    # ==================== 自动刷新网卡连接状态【已修复卡顿】 ====================
     def auto_refresh_adapter_status(self):
         if self.auto_refresh_enabled:
-            try:
-                self.refresh_adapters()
-            except Exception:
-                pass
+            # 新开子线程执行网卡查询，不阻塞tk主线程UI
+            threading.Thread(target=self.refresh_adapters, daemon=True).start()
         # 每5秒自动刷新一次
         self.root.after(5000, self.auto_refresh_adapter_status)
 
@@ -205,8 +204,10 @@ class NetConfigTool:
     def show_route_table(self):
         self.log("   正在读取系统全路由表...")
         out, _ = self.run_cmd("route print")
-        self.route_text.delete(1.0, tk.END)
-        self.route_text.insert(tk.END, out)
+        def set_text():
+            self.route_text.delete(1.0, tk.END)
+            self.route_text.insert(tk.END, out)
+        self.root.after(0, set_text)
         self.log("✅ 路由表加载完毕")
 
     def add_route(self):
@@ -287,9 +288,10 @@ class NetConfigTool:
 
     # 日志输出
     def log(self, msg):
-        self.log_text.insert(tk.END, msg + "\n")
-        self.log_text.see(tk.END)
-        self.log_text.update_idletasks()
+        def write_log():
+            self.log_text.insert(tk.END, msg + "\n")
+            self.log_text.see(tk.END)
+        self.root.after(0, write_log)
 
     # ==================== 界面布局 ====================
     def create_widgets(self):
@@ -329,17 +331,17 @@ class NetConfigTool:
         # 右侧路由配置
         right_frame = ttk.LabelFrame(self.root, text="路由配置（独立功能，无需选择网卡）")
         right_frame.place(x=450, y=80, width=420, height=280)
-        ttk.Label(right_frame, text="目标网段：").grid(row=0, column=0, padx=5, pady=5, sticky="w")
+        ttk.标签(right_frame, text="目标网段：").grid(row=0, column=0, padx=5, pady=5, sticky="w")
         self.dest_entry = ttk.Entry(right_frame, width=22)
         self.dest_entry.grid(row=0, column=1, padx=5, pady=5)
         self.dest_entry.insert(0,"0.0.0.0")
 
-        ttk.Label(right_frame, text="路由掩码：").grid(row=1, column=0, padx=5, pady=5, sticky="w")
+        ttk.标签(right_frame, text="路由掩码：").grid(row=1, column=0, padx=5, pady=5, sticky="w")
         self.route_mask_entry = ttk.Entry(right_frame, width=22)
         self.route_mask_entry.grid(row=1, column=1, padx=5, pady=5)
         self.route_mask_entry.insert(0,"0.0.0.0")
 
-        ttk.Label(right_frame, text="下一跳网关：").grid(row=2, column=0, padx=5, pady=5, sticky="w")
+        ttk.标签(right_frame, text="下一跳网关：").grid(row=2, column=0, padx=5, pady=5, sticky="w")
         self.route_gw_entry = ttk.Entry(right_frame, width=22)
         self.route_gw_entry.grid(row=2, column=1, padx=5, pady=5)
 
